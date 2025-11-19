@@ -7,74 +7,235 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ==================== USER ====================
 model User {
-  id            String    @id @default(auto()) @map("_id") @db.ObjectId
-  supabaseUid   String    @unique
-  email         String    @unique
-  name          String?
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  supabaseUid   String         @unique
+  email         String         @unique
+  name          String
+  avatar        String?
   expoPushToken String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
 
-  ownedProjects Project[] @relation("ProjectOwner")
-  assignedTasks Task[]    @relation("TaskAssignee")
+  // Relations
+  ownedProjects Project[]      @relation("ProjectOwner")
+  teamMembers   TeamMember[]
+  sentMessages  Message[]      @relation("SentMessages")
+  receivedDMs   Message[]      @relation("ReceivedDMs")
   notifications Notification[]
+  // taskComments  TaskComment[]
+  assignedTasks Task[]         @relation(name: "TaskAssignee")
+  authoredComments TaskComment[] @relation("CommentAuthor")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("users")
+  tasks Task[] @relation("TaskCreator")
 }
 
-model Project {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+// ==================== TEAM ====================
+model Team {
+  id        String       @id @default(auto()) @map("_id") @db.ObjectId
   name      String
-  description String?
-  owner     User     @relation("ProjectOwner", fields: [ownerId], references: [id])
-  ownerId   String   @db.ObjectId
-  tasks     Task[]
-  createdAt DateTime @default(now())
+  avatar    String?
+  createdBy String       @db.ObjectId
+privacy   String   @default("private")
+  members   TeamMember[]
+  projects  Project[]
+  chatRoom  ChatRoom?
+  invites   TeamInvite[]
 
+  createdAt DateTime @default(now())
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  teamId   String   @db.ObjectId
+  userId   String   @db.ObjectId
+  role     String   @default("member") // admin, manager, member
+
+  team     Team     @relation(fields: [teamId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+  joinedAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+model TeamInvite {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  teamId    String   @db.ObjectId
+  email     String
+  token     String   @unique
+  role      String   @default("member")
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  invitedBy String   @db.ObjectId
+
+  team      Team     @relation(fields: [teamId], references: [id])
+
+  createdAt DateTime @default(now())
+  @@map("team_invites")
+}
+
+// ==================== PROJECT ====================
+model Project {
+  id          String      @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  flag        ProjectFlag @default(NORMAL)
+
+  teamId      String?      @db.ObjectId
+  team        Team?        @relation(fields: [teamId], references: [id])
+  ownerId     String      @db.ObjectId
+  owner       User        @relation("ProjectOwner", fields: [ownerId], references: [id])
+
+  tasks       Task[]
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
   @@map("projects")
 }
 
+enum ProjectFlag { 
+  NORMAL 
+  URGENT 
+  CRITICAL 
+  }
+
+// ==================== TASK ====================
 model Task {
-  id          String      @id @default(auto()) @map("_id") @db.ObjectId
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
   title       String
   description String?
-  status      TaskStatus  @default(TODO)
-  dueDate     DateTime?
-  assignee    User?       @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  assigneeId  String?     @db.ObjectId
-  project     Project?    @relation(fields: [projectId], references: [id])
-  projectId   String?     @db.ObjectId
-  createdAt   DateTime    @default(now())
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  startDate   DateTime?
+  endDate     DateTime?
+
+  projectId   String       @db.ObjectId
+  project     Project      @relation(fields: [projectId], references: [id])
+  assigneeId  String?      @db.ObjectId
+  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
+createdBy   String       @db.ObjectId
+  creator     User         @relation("TaskCreator", fields: [createdBy], references: [id])
+  comments    TaskComment[]
+  files       File[]       @relation("TaskFiles")
   notifications Notification[]
 
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   @@map("tasks")
 }
 
+enum TaskStatus { 
+  TODO 
+  IN_PROGRESS
+   DONE 
+   }
+enum TaskPriority { 
+  LOW 
+  MEDIUM 
+  HIGH 
+  CRITICAL 
+  }
+
+// ==================== TASK COMMENT ====================
+model TaskComment {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  content   String
+  taskId    String   @db.ObjectId
+  authorId  String   @db.ObjectId
+  mentions  String[] // user IDs
+
+  task      Task     @relation(fields: [taskId], references: [id])
+  author    User     @relation("CommentAuthor", fields: [authorId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@map("task_comments")
+}
+
+// ==================== FILE (Fixed Relations!) ====================
+model File {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  url        String
+  name       String
+  size       Int
+  mimeType   String
+  uploadedBy String    @db.ObjectId
+
+  // Relations
+  taskId     String?   @db.ObjectId
+  task       Task?     @relation("TaskFiles", fields: [taskId], references: [id])
+
+  messageId  String?   @db.ObjectId
+  message    Message?  @relation("MessageFiles", fields: [messageId], references: [id])
+
+  createdAt  DateTime  @default(now())
+  @@map("files")
+}
+
+// ==================== CHAT ====================
+model ChatRoom {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  teamId    String    @unique @db.ObjectId
+  team      Team      @relation(fields: [teamId], references: [id])
+  messages  Message[]
+  @@map("chat_rooms")
+}
+
+model Message {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  content     String
+  senderId    String    @db.ObjectId
+  sender      User      @relation("SentMessages", fields: [senderId], references: [id])
+
+  receiverId  String?   @db.ObjectId
+  receiver    User?     @relation("ReceivedDMs", fields: [receiverId], references: [id])
+
+  chatRoomId  String?   @db.ObjectId
+  chatRoom    ChatRoom? @relation(fields: [chatRoomId], references: [id])
+
+  files       File[]    @relation("MessageFiles")
+
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+  @@map("messages")
+}
+
+// ==================== NOTIFICATION ====================
 model Notification {
-  id        String            @id @default(auto()) @map("_id") @db.ObjectId
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   title     String
   message   String
-  type      NotificationType
-  read      Boolean           @default(false)
-  user      User              @relation(fields: [userId], references: [id])
-  userId    String            @db.ObjectId
-  task      Task?             @relation(fields: [taskId], references: [id])
-  taskId    String?           @db.ObjectId
-  data      Json?
-  createdAt DateTime          @default(now())
+  type      String
+  read      Boolean  @default(false)
 
+  userId    String   @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id])
+
+  taskId    String?  @db.ObjectId
+  task      Task?    @relation(fields: [taskId], references: [id])
+
+  data      Json?
+  createdAt DateTime @default(now())
   @@map("notifications")
 }
 
-enum TaskStatus {
-  TODO
-  IN_PROGRESS
-  DONE
+// ==================== AUDIT LOG ====================
+model AuditLog {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  action    String
+  entity    String
+  entityId  String?
+  actorId   String   @db.ObjectId
+  details   Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  @@map("audit_logs")
 }
-enum NotificationType { 
-  TASK_ASSIGNED 
-  DUE_SOON 
-  TASK_COMPLETED 
-  MENTION 
-  }

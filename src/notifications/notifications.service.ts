@@ -1,46 +1,76 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateNotificationDto } from './dto/create-notification.dto';
+import { Expo, ExpoPushMessage } from 'expo-server-sdk';
+
+const expo = new Expo();
 
 @Injectable()
 export class NotificationsService {
   constructor(private prisma: PrismaService) {}
 
-  async create(dto: CreateNotificationDto) {
-    const { userId, taskId, sendPush = true, data, ...rest } = dto;
-
+  // MAIN: Send Push + Save In-App Notification
+  async send(
+    userId: string,
+    title: string,
+    body: string,
+    data: any = {},
+    type: 'TASK_ASSIGNED' | 'MENTION' | 'COMMENT' | 'INVITE' | 'MESSAGE'|"DONE",
+  ) {
+    // Save in-app notification
     const notification = await this.prisma.notification.create({
       data: {
-        ...rest,
-        userId, // ← scalar field (MongoDB style)
-        taskId: taskId || null, // ← scalar field, not relation object
-        data: data || undefined,
+        userId,
+        title,
+        message: body,
+        type,
+        data,
       },
-      include: { task: true, user: true },
     });
 
-    if (sendPush) {
-      await this.sendPush(userId, dto.title, dto.message, data);
+    // Send Expo Push (if user has token)
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { expoPushToken: true },
+    });
+
+    if (user?.expoPushToken && Expo.isExpoPushToken(user.expoPushToken)) {
+      const message: ExpoPushMessage = {
+        to: user.expoPushToken,
+        sound: 'default',
+        title,
+        body,
+        data: { ...data, notificationId: notification.id },
+      };
+
+      try {
+        const receipts = await expo.sendPushNotificationsAsync([message]);
+        console.log('Push sent:', receipts);
+      } catch (error) {
+        console.error('Push failed:', error);
+      }
     }
 
     return notification;
   }
 
-  async findByUser(userId: string, unreadOnly = false) {
+  // Get user's notifications
+  async getMyNotifications(userId: string, unreadOnly = false) {
     return this.prisma.notification.findMany({
-      where: { userId, ...(unreadOnly && { read: false }) },
+      where: { userId, read: unreadOnly ? false : undefined },
       orderBy: { createdAt: 'desc' },
-      include: { task: true },
+      take: 50,
     });
   }
 
-  async markAsRead(id: string) {
-    return this.prisma.notification.update({
-      where: { id },
+  // Mark as read
+  async markAsRead(userId: string, notificationId: string) {
+    return this.prisma.notification.updateMany({
+      where: { id: notificationId, userId },
       data: { read: true },
     });
   }
 
+  // Mark all as read
   async markAllAsRead(userId: string) {
     return this.prisma.notification.updateMany({
       where: { userId, read: false },
@@ -48,34 +78,17 @@ export class NotificationsService {
     });
   }
 
-  private async sendPush(
-    userId: string,
-    title: string,
-    message: string,
-    data?: Record<string, any>,
-  ) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { expoPushToken: true },
+  // Count unread
+  async countUnread(userId: string) {
+    return this.prisma.notification.count({
+      where: { userId, read: false },
     });
+  }
 
-    if (!user?.expoPushToken) return;
-
-    try {
-      await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: user.expoPushToken,
-          title,
-          body: message,
-          data: data || {},
-          sound: 'default',
-          priority: 'high',
-        }),
-      });
-    } catch (error) {
-      console.error('Push notification failed', error);
+  // Helper: Send to multiple users
+  async sendToMany(userIds: string[], title: string, body: string, data = {}) {
+    for (const userId of userIds) {
+      await this.send(userId, title, body, data, 'MESSAGE');
     }
   }
 }

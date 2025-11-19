@@ -1,49 +1,57 @@
 import {
   Controller,
-  Get,
   Post,
-  Body,
+  Get,
   Patch,
-  Param,
   Delete,
+  Param,
+  Body,
+  Req,
   UseGuards,
-  Request,
+  Query,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
-import { CreateProjectDto } from './dto/create-project.dto';
-import { UpdateProjectDto } from './dto/update-project.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('projects')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
 @Controller('projects')
+@UseGuards(JwtAuthGuard)
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(private projectsService: ProjectsService) {}
 
   @Post()
-  create(@Body() createProjectDto: CreateProjectDto, @Request() req: any) {
-    return this.projectsService.create(createProjectDto, req.user.userId);
+  @ApiOperation({ summary: 'Create new project' })
+  create(@Req() req: any, @Body() body: any) {
+    return this.projectsService.create(req.user.userId, body);
   }
-
   @Get()
-  findAll() {
-    return this.projectsService.findAll();
+  @ApiOperation({ summary: 'Get all my projects (personal + team)' })
+  getMyProjects(@Req() req: any) {
+    return this.projectsService.findAllByUser(req.user.userId);
+  }
+  @Get('team/:teamId')
+  @ApiOperation({ summary: 'Get all projects in a team' })
+  getByTeam(@Param('teamId') teamId: string, @Req() req: any) {
+    return this.projectsService.findAllByTeam(teamId, req.user.userId);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.projectsService.findOne(id);
+  @ApiOperation({ summary: 'Get single project with tasks & comments' })
+  getOne(@Param('id') id: string, @Req() req: any) {
+    return this.projectsService.findOne(id, req.user.userId);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateProjectDto: UpdateProjectDto) {
-    return this.projectsService.update(id, updateProjectDto);
+  @ApiOperation({ summary: 'Update project' })
+  update(@Param('id') id: string, @Req() req: any, @Body() body: any) {
+    return this.projectsService.update(id, req.user.userId, body);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.projectsService.remove(id);
+  @ApiOperation({ summary: 'Delete project (admin/owner only)' })
+  remove(@Param('id') id: string, @Req() req: any) {
+    return this.projectsService.remove(id, req.user.userId);
   }
 }

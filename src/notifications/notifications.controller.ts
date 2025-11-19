@@ -1,31 +1,40 @@
-import { Controller, Get, Patch, Param, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Param,
+  Req,
+  UseGuards,
+  Query,
+} from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
 @ApiTags('notifications')
-@UseGuards(JwtAuthGuard)
+@ApiBearerAuth()
 @Controller('notifications')
+@UseGuards(JwtAuthGuard)
 export class NotificationsController {
-  constructor(private notificationsService: NotificationsService) {}
+  constructor(private noti: NotificationsService) {}
 
   @Get()
-  findAll(@Req() req) {
-    return this.notificationsService.findByUser(req.user.userId);
+  getMy(@Req() req: any, @Query('unread') unread?: string) {
+    return this.noti.getMyNotifications(req.user.userId, unread === 'true');
   }
 
-  @Get('unread')
-  findUnread(@Req() req) {
-    return this.notificationsService.findByUser(req.user.userId, true);
+  @Get('count')
+  countUnread(@Req() req: any) {
+    return this.noti.countUnread(req.user.userId);
   }
 
   @Patch(':id/read')
-  markAsRead(@Param('id') id: string) {
-    return this.notificationsService.markAsRead(id);
+  markAsRead(@Param('id') id: string, @Req() req: any) {
+    return this.noti.markAsRead(req.user.userId, id);
   }
 
   @Patch('read-all')
-  markAllAsRead(@Req() req) {
-    return this.notificationsService.markAllAsRead(req.user.userId);
+  markAllAsRead(@Req() req: any) {
+    return this.noti.markAllAsRead(req.user.userId);
   }
 }
