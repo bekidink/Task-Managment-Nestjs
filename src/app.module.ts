@@ -17,7 +17,7 @@ import { MessagesModule } from './messages/messages.module';
 import { FilesModule } from './files/files.module';
 import { InvitesModule } from './invites/invites.module';
 import { NotificationsModule } from './notifications/notifications.module';
-
+import { DashboardModule } from './dashboard/dashboard.module';
 // Real-time
 import { ChatGateway } from './gateways/chat.gateway';
 
@@ -45,6 +45,7 @@ import { ChatGateway } from './gateways/chat.gateway';
     FilesModule,
     InvitesModule,
     NotificationsModule,
+    DashboardModule,
   ],
   controllers: [],
   providers: [

@@ -9,37 +9,36 @@ datasource db {
 
 // ==================== USER ====================
 model User {
-  id            String         @id @default(auto()) @map("_id") @db.ObjectId
-  supabaseUid   String         @unique
-  email         String         @unique
+  id            String  @id @default(auto()) @map("_id") @db.ObjectId
+  supabaseUid   String  @unique
+  email         String  @unique
   name          String
   avatar        String?
   expoPushToken String?
 
-  // Relations
-  ownedProjects Project[]      @relation("ProjectOwner")
-  teamMembers   TeamMember[]
-  sentMessages  Message[]      @relation("SentMessages")
-  receivedDMs   Message[]      @relation("ReceivedDMs")
-  notifications Notification[]
-  // taskComments  TaskComment[]
-  assignedTasks Task[]         @relation(name: "TaskAssignee")
-  authoredComments TaskComment[] @relation("CommentAuthor")
+  ownedProjects    Project[]      @relation("ProjectOwner")
+  teamMembers      TeamMember[]
+  sentMessages     Message[]      @relation("SentMessages")
+  receivedDMs      Message[]      @relation("ReceivedDMs")
+  notifications    Notification[]
+  assignedTasks    Task[]         @relation(name: "TaskAssignee")
+  authoredComments TaskComment[]  @relation("CommentAuthor")
+  tasks            Task[]         @relation("TaskCreator")
+  auditLogs        AuditLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("users")
-  tasks Task[] @relation("TaskCreator")
 }
 
-// ==================== TEAM ====================
+// ==================== TEAM & CHAT ====================
 model Team {
   id        String       @id @default(auto()) @map("_id") @db.ObjectId
   name      String
   avatar    String?
   createdBy String       @db.ObjectId
-privacy   String   @default("private")
+  privacy   String       @default("private")
   members   TeamMember[]
   projects  Project[]
   chatRoom  ChatRoom?
@@ -50,10 +49,10 @@ privacy   String   @default("private")
 }
 
 model TeamMember {
-  id       String   @id @default(auto()) @map("_id") @db.ObjectId
-  teamId   String   @db.ObjectId
-  userId   String   @db.ObjectId
-  role     String   @default("member") // admin, manager, member
+  id       String @id @default(auto()) @map("_id") @db.ObjectId
+  teamId   String @db.ObjectId
+  userId   String @db.ObjectId
+  role     String @default("member")
 
   team     Team     @relation(fields: [teamId], references: [id])
   user     User     @relation(fields: [userId], references: [id])
@@ -74,12 +73,21 @@ model TeamInvite {
   invitedBy String   @db.ObjectId
 
   team      Team     @relation(fields: [teamId], references: [id])
-
   createdAt DateTime @default(now())
+
   @@map("team_invites")
 }
 
-// ==================== PROJECT ====================
+model ChatRoom {
+  id       String    @id @default(auto()) @map("_id") @db.ObjectId
+  teamId   String    @unique @db.ObjectId
+  team     Team      @relation(fields: [teamId], references: [id])
+  messages Message[]
+
+  @@map("chat_rooms")
+}
+
+// ==================== PROJECT & TASK ====================
 model Project {
   id          String      @id @default(auto()) @map("_id") @db.ObjectId
   name        String
@@ -88,15 +96,16 @@ model Project {
   endDate     DateTime?
   flag        ProjectFlag @default(NORMAL)
 
-  teamId      String?      @db.ObjectId
-  team        Team?        @relation(fields: [teamId], references: [id])
-  ownerId     String      @db.ObjectId
-  owner       User        @relation("ProjectOwner", fields: [ownerId], references: [id])
+  teamId  String? @db.ObjectId
+  team    Team?   @relation(fields: [teamId], references: [id])
+  ownerId String  @db.ObjectId
+  owner   User    @relation("ProjectOwner", fields: [ownerId], references: [id])
 
-  tasks       Task[]
+  tasks Task[]
 
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@map("projects")
 }
 
@@ -106,7 +115,6 @@ enum ProjectFlag {
   CRITICAL 
   }
 
-// ==================== TASK ====================
 model Task {
   id          String       @id @default(auto()) @map("_id") @db.ObjectId
   title       String
@@ -116,126 +124,132 @@ model Task {
   startDate   DateTime?
   endDate     DateTime?
 
-  projectId   String       @db.ObjectId
-  project     Project      @relation(fields: [projectId], references: [id])
-  assigneeId  String?      @db.ObjectId
-  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
-createdBy   String       @db.ObjectId
-  creator     User         @relation("TaskCreator", fields: [createdBy], references: [id])
-  comments    TaskComment[]
-  files       File[]       @relation("TaskFiles")
+  projectId     String         @db.ObjectId
+  project       Project        @relation(fields: [projectId], references: [id])
+  assigneeId    String?        @db.ObjectId
+  assignee      User?          @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  createdBy     String         @db.ObjectId
+  creator       User           @relation("TaskCreator", fields: [createdBy], references: [id])
+  comments      TaskComment[]
+  files         File[]         @relation("TaskFiles")
   notifications Notification[]
 
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@map("tasks")
 }
 
 enum TaskStatus { 
   TODO 
   IN_PROGRESS
-   DONE 
-   }
+   DONE
+    }
 enum TaskPriority { 
   LOW 
   MEDIUM 
   HIGH 
-  CRITICAL 
-  }
+  CRITICAL
+   }
 
-// ==================== TASK COMMENT ====================
 model TaskComment {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  content   String
-  taskId    String   @db.ObjectId
-  authorId  String   @db.ObjectId
-  mentions  String[] // user IDs
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  content  String
+  taskId   String   @db.ObjectId
+  authorId String   @db.ObjectId
+  mentions String[]
 
-  task      Task     @relation(fields: [taskId], references: [id])
-  author    User     @relation("CommentAuthor", fields: [authorId], references: [id])
-
+  task     Task     @relation(fields: [taskId], references: [id])
+  author   User     @relation("CommentAuthor", fields: [authorId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
   @@map("task_comments")
 }
 
-// ==================== FILE (Fixed Relations!) ====================
+// ==================== FILE (FIXED!) ====================
 model File {
-  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   url        String
   name       String
   size       Int
   mimeType   String
-  uploadedBy String    @db.ObjectId
+  uploadedBy String   @db.ObjectId
 
-  // Relations
-  taskId     String?   @db.ObjectId
-  task       Task?     @relation("TaskFiles", fields: [taskId], references: [id])
+  // One file can belong to either Task OR Message
+  taskId     String?  @db.ObjectId
+  task       Task?    @relation("TaskFiles", fields: [taskId], references: [id],onDelete: NoAction, onUpdate: NoAction)
 
-  messageId  String?   @db.ObjectId
-  message    Message?  @relation("MessageFiles", fields: [messageId], references: [id])
+  messageId  String?  @db.ObjectId
+  message    Message? @relation("MessageFiles", fields: [messageId], references: [id],onDelete: NoAction, onUpdate: NoAction)
 
-  createdAt  DateTime  @default(now())
+  createdAt  DateTime @default(now())
+
   @@map("files")
 }
 
-// ==================== CHAT ====================
-model ChatRoom {
-  id        String    @id @default(auto()) @map("_id") @db.ObjectId
-  teamId    String    @unique @db.ObjectId
-  team      Team      @relation(fields: [teamId], references: [id])
-  messages  Message[]
-  @@map("chat_rooms")
-}
-
+// ==================== MESSAGE (WITH REPLIES!) ====================
 model Message {
-  id          String    @id @default(auto()) @map("_id") @db.ObjectId
-  content     String
-  senderId    String    @db.ObjectId
-  sender      User      @relation("SentMessages", fields: [senderId], references: [id])
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  content    String
+  senderId   String    @db.ObjectId
+  receiverId String?   @db.ObjectId   // null = team message
+  chatRoomId String?   @db.ObjectId   // null = DM
 
-  receiverId  String?   @db.ObjectId
-  receiver    User?     @relation("ReceivedDMs", fields: [receiverId], references: [id])
+  // REPLIES SUPPORT
+  replyToId  String?   @db.ObjectId
+  replyTo    Message?  @relation("MessageReplies", fields: [replyToId], references: [id],onDelete: NoAction, onUpdate: NoAction)
+  replies    Message[] @relation("MessageReplies")
 
-  chatRoomId  String?   @db.ObjectId
-  chatRoom    ChatRoom? @relation(fields: [chatRoomId], references: [id])
+  // FILES (Fixed name!)
+  messageFiles File[]   @relation("MessageFiles")
 
-  files       File[]    @relation("MessageFiles")
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime?  @updatedAt
 
-  readAt      DateTime?
-  createdAt   DateTime  @default(now())
+  sender     User      @relation("SentMessages", fields: [senderId], references: [id])
+  receiver   User?     @relation("ReceivedDMs", fields: [receiverId], references: [id])
+  chatRoom   ChatRoom? @relation(fields: [chatRoomId], references: [id])
+
+  @@index([chatRoomId])
+  @@index([receiverId])
+  @@index([senderId])
+  @@index([createdAt])
   @@map("messages")
 }
 
-// ==================== NOTIFICATION ====================
+// ==================== NOTIFICATION & AUDIT ====================
 model Notification {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
   title     String
   message   String
   type      String
-  read      Boolean  @default(false)
-
-  userId    String   @db.ObjectId
-  user      User     @relation(fields: [userId], references: [id])
-
-  taskId    String?  @db.ObjectId
-  task      Task?    @relation(fields: [taskId], references: [id])
-
+  read      Boolean @default(false)
+  userId    String  @db.ObjectId
+  user      User    @relation(fields: [userId], references: [id])
+  taskId    String? @db.ObjectId
+  task      Task?   @relation(fields: [taskId], references: [id])
   data      Json?
   createdAt DateTime @default(now())
+
   @@map("notifications")
 }
 
-// ==================== AUDIT LOG ====================
 model AuditLog {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
   action    String
   entity    String
   entityId  String?
-  actorId   String   @db.ObjectId
+  actorId   String  @db.ObjectId
+  actor     User    @relation(fields: [actorId], references: [id])
   details   Json?
   ip        String?
   userAgent String?
   createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([action])
   @@map("audit_logs")
 }

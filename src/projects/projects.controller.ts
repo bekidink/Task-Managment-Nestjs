@@ -31,6 +31,12 @@ export class ProjectsController {
   getMyProjects(@Req() req: any) {
     return this.projectsService.findAllByUser(req.user.userId);
   }
+  
+  @Get(':id/members')
+  @ApiOperation({ summary: 'Get all members of a project' })
+  async getMembers(@Param('id') projectId: string, @Req() req: any) {
+    return this.projectsService.getProjectMembers(projectId, req.user.userId);
+  }
   @Get('team/:teamId')
   @ApiOperation({ summary: 'Get all projects in a team' })
   getByTeam(@Param('teamId') teamId: string, @Req() req: any) {

@@ -1,18 +1,45 @@
-# docker-compose.yml (recommended even in production)
+# docker-compose.yml → FINAL PRODUCTION STACK (NO KEYCLOAK)
 version: '3.8'
+
 services:
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+  # YOUR NESTJS BACKEND
+  backend:
+    build: .
+    container_name: tasker-backend
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=mongodb://mongo:27017/tasker
+      - JWT_SECRET=tasker-ethiopia-2025-super-secret
+      # CLOUDINARY (FILE UPLOAD)
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+      # SUPABASE (AUTH)
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
     volumes:
-      - minio-data:/data
-    restart: unless-stopped
+      - ./bpmn:/app/bpmn:ro           # Camunda workflows (optional)
+    depends_on:
+      - mongo
+    networks:
+      - tasker-net
+
+  # MONGODB
+  mongo:
+    image: mongo:7
+    container_name: tasker-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - tasker-net
 
 volumes:
-  minio-data:
+  mongo_data:
+
+networks:
+  tasker-net:
+    driver: bridge

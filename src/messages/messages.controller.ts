@@ -1,13 +1,14 @@
+// src/messages/messages.controller.ts
 import {
   Controller,
   Post,
   Get,
-  Delete,
+  Query,
   Param,
   Body,
   Req,
   UseGuards,
-  Query,
+  Delete,
 } from '@nestjs/common';
 import { MessagesService } from './messages.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -20,83 +21,80 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 export class MessagesController {
   constructor(private messagesService: MessagesService) {}
 
-  // Send Group Message
-  @Post('team/:teamId')
-  @ApiOperation({ summary: 'Send message to team chat' })
-  sendGroup(
-    @Param('teamId') teamId: string,
+  @Post()
+  @ApiOperation({ summary: 'Send message (team or DM)' })
+  send(@Req() req: any, @Body() body: any) {
+    return this.messagesService.sendMessage(req.user.userId, body);
+  }
+
+  @Get('conversation')
+  @ApiOperation({ summary: 'Get conversation' })
+  getConversation(@Req() req: any, @Query() query: any) {
+    return this.messagesService.getConversation(req.user.userId, query);
+  }
+  @Get('my-chats')
+  async getMyChats(@Req() req: any) {
+    return this.messagesService.getMyChats(req.user.userId);
+  }
+
+  @Get('channel/:channelId')
+  async getChannel(
+    @Param('channelId') channelId: string,
+    @Query() q: any,
     @Req() req: any,
-    @Body() body: { content: string; files?: any[] },
   ) {
-    return this.messagesService.sendGroup(
-      teamId,
+    return this.messagesService.getChannelMessages(
       req.user.userId,
-      body.content,
-      body.files,
+      channelId,
+      q,
     );
   }
 
-  // Send Direct Message
-  @Post('dm/:receiverId')
-  @ApiOperation({ summary: 'Send direct message' })
-  sendDM(
-    @Param('receiverId') receiverId: string,
-    @Req() req: any,
-    @Body() body: { content: string; files?: any[] },
-  ) {
-    return this.messagesService.sendDM(
-      req.user.userId,
-      receiverId,
-      body.content,
-      body.files,
-    );
-  }
-
-  // Get Team Chat
-  @Get('team/:teamId')
-  @ApiOperation({ summary: 'Get team chat history' })
-  getTeamMessages(
-    @Param('teamId') teamId: string,
-    @Req() req: any,
-    @Query('limit') limit?: number,
-    @Query('before') before?: string,
-  ) {
-    return this.messagesService.getTeamMessages(
-      teamId,
-      req.user.userId,
-      limit,
-      before,
-    );
-  }
-
-  // Get DMs
   @Get('dm/:otherUserId')
-  @ApiOperation({ summary: 'Get direct messages with user' })
-  getDMs(
+  async getDM(
     @Param('otherUserId') otherUserId: string,
+    @Query() q: any,
     @Req() req: any,
-    @Query('limit') limit?: number,
-    @Query('before') before?: string,
   ) {
-    return this.messagesService.getDMs(
-      req.user.userId,
-      otherUserId,
-      limit,
-      before,
-    );
+    return this.messagesService.getDMMessages(req.user.userId, otherUserId, q);
+  }
+  @Get(':id')
+  @ApiOperation({ summary: 'Get message by ID' })
+  getById(@Param('id') id: string, @Req() req: any) {
+    return this.messagesService.getMessageById(id, req.user.userId);
   }
 
-  // Mark as Read
-  @Post(':id/read')
-  @ApiOperation({ summary: 'Mark message as read' })
-  markAsRead(@Param('id') id: string, @Req() req: any) {
-    return this.messagesService.markAsRead(id, req.user.userId);
+  @Get('search')
+  @ApiOperation({ summary: 'Search messages' })
+  search(@Req() req: any, @Query('q') q: string) {
+    return this.messagesService.searchMessages(req.user.userId, q);
   }
 
-  // Delete Message
+  @Get('unread-count')
+  @ApiOperation({ summary: 'Get unread count' })
+  getUnreadCount(@Req() req: any) {
+    return this.messagesService.getUnreadCount(req.user.userId);
+  }
+  // ADD THESE TO YOUR EXISTING MessagesController
+
   @Delete(':id')
   @ApiOperation({ summary: 'Delete your own message' })
-  deleteMessage(@Param('id') id: string, @Req() req: any) {
+  async deleteMessage(@Param('id') id: string, @Req() req: any) {
     return this.messagesService.deleteMessage(id, req.user.userId);
+  }
+
+  @Delete('dm/:otherUserId')
+  @ApiOperation({ summary: 'Clear entire DM conversation' })
+  async deleteDM(@Param('otherUserId') otherUserId: string, @Req() req: any) {
+    return this.messagesService.deleteDMConversation(
+      req.user.userId,
+      otherUserId,
+    );
+  }
+
+  @Delete('team/:teamId')
+  @ApiOperation({ summary: 'Clear team chat (admin/manager only)' })
+  async clearTeamChat(@Param('teamId') teamId: string, @Req() req: any) {
+    return this.messagesService.clearTeamChat(teamId, req.user.userId);
   }
 }

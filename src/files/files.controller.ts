@@ -1,56 +1,69 @@
+// src/files/files.controller.ts → FINAL CLEAN VERSION
 import {
   Controller,
   Post,
   Get,
   Delete,
   Param,
-  UseInterceptors,
+  Query,
   UploadedFile,
+  UseInterceptors,
   Req,
-  UseGuards,
-  Body,
 } from '@nestjs/common';
-import { FilesService } from './files.service';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import {
-  ApiTags,
-  ApiBearerAuth,
-  ApiOperation,
-  ApiConsumes,
-} from '@nestjs/swagger';
+import { FilesService } from './files.service';
+import { UploadType } from './dto/file.dto';
 
-@ApiTags('files')
-@ApiBearerAuth()
 @Controller('files')
-@UseGuards(JwtAuthGuard)
 export class FilesController {
-  constructor(private filesService: FilesService) {}
+  constructor(private cloudinaryService: FilesService) {}
 
   @Post('upload')
-  @ApiOperation({ summary: 'Upload file (task or message attachment)' })
-  @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file'))
   upload(
     @UploadedFile() file: Express.Multer.File,
+    @Query('type') type: UploadType = 'chat',
     @Req() req: any,
-    @Body() body: { taskId?: string; messageId?: string },
   ) {
-    return this.filesService.uploadFile(file, req.user.userId, {
-      taskId: body.taskId,
-      messageId: body.messageId,
-    });
+    return this.cloudinaryService.uploadFile(file, type, req.user?.userId);
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get file info' })
-  getFile(@Param('id') id: string, @Req() req: any) {
-    return this.filesService.getSignedUrl(id, req.user.userId);
+  @Delete(':publicId')
+  delete(@Param('publicId') publicId: string) {
+    return this.cloudinaryService.deleteFile(publicId);
   }
 
-  @Delete(':id')
-  @ApiOperation({ summary: 'Delete your file' })
-  deleteFile(@Param('id') id: string, @Req() req: any) {
-    return this.filesService.deleteFile(id, req.user.userId);
+  @Get(':publicId')
+  getFile(@Param('publicId') publicId: string) {
+    return this.cloudinaryService.getFileMetadata(publicId);
+  }
+
+  @Get('my-uploads')
+  getMyUploads(
+    @Req() req: any,
+    @Query('type') type?: UploadType,
+    @Query('limit') limit?: string,
+  ) {
+    return this.cloudinaryService.getUserUploads(
+      req.user.userId,
+      type,
+      limit ? parseInt(limit) : 20,
+    );
+  }
+
+  @Get('folder/:folder')
+  getFolderFiles(
+    @Param('folder') folder: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.cloudinaryService.getFolderFiles(
+      folder,
+      limit ? parseInt(limit) : 30,
+    );
+  }
+
+  @Get('search')
+  searchFiles(@Query('q') q: string) {
+    return this.cloudinaryService.searchFiles(q);
   }
 }

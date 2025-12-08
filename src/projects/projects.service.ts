@@ -157,7 +157,91 @@ export class ProjectsService {
 
     return project;
   }
+ 
+  /**
+   * GET ALL MEMBERS OF A PROJECT
+   * Works for both team projects & personal projects
+   * Returns rich user data + role in team
+   */
+  async getProjectMembers(projectId: string, requesterId: string) {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        id: true,
+        name: true,
+        teamId: true,
+        ownerId: true,
+      },
+    });
 
+    if (!project) throw new NotFoundException('Project not found');
+
+    // Permission check
+    const isOwner = project.ownerId === requesterId;
+    const isTeamMember = project.teamId
+      ? await this.prisma.teamMember.count({
+          where: { teamId: project.teamId, userId: requesterId },
+        })
+      : 0;
+
+    if (!isOwner && !isTeamMember) {
+      throw new ForbiddenException('You do not have access to this project');
+    }
+
+    // CASE 1: Personal project → only owner
+    if (!project.teamId) {
+      const owner = await this.prisma.user.findUnique({
+        where: { id: project.ownerId },
+        select: { id: true, name: true, avatar: true, email: true },
+      });
+
+      return {
+        total: 1,
+        members: [
+          {
+            ...owner!,
+            role: 'Owner',
+            joinedAt: null,
+            isOnline: false, // optional: add later with Redis
+          },
+        ],
+      };
+    }
+
+    // CASE 2: Team project → get all team members
+    const teamMembers = await this.prisma.teamMember.findMany({
+      where: { teamId: project.teamId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            email: true,
+            // expoPushToken: true, // optional
+          },
+        },
+      },
+      orderBy: { role: 'asc' }, // admin → manager → member
+    });
+
+    const members = teamMembers.map((tm) => ({
+      ...tm.user,
+      role: tm.role.charAt(0).toUpperCase() + tm.role.slice(1), // "admin" → "Admin"
+      joinedAt: tm.joinedAt,
+      isOwner: tm.userId === project.ownerId,
+    }));
+
+    return {
+      total: members.length,
+      members,
+      project: {
+        id: project.id,
+        name: project.name,
+        isTeamProject: true,
+      },
+    };
+  }
   //.UPDATE Project
   async update(id: string, userId: string, data: any) {
     const project = await this.prisma.project.findUnique({ where: { id } });
