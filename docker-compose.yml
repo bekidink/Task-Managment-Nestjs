@@ -1,45 +1,73 @@
-# docker-compose.yml → FINAL PRODUCTION STACK (NO KEYCLOAK)
 version: '3.8'
-
 services:
-  # YOUR NESTJS BACKEND
-  backend:
-    build: .
-    container_name: tasker-backend
-    ports:
-      - "3000:3000"
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0
+    container_name: elasticsearch
     environment:
-      - NODE_ENV=production
-      - DATABASE_URL=mongodb://mongo:27017/tasker
-      - JWT_SECRET=tasker-ethiopia-2025-super-secret
-      # CLOUDINARY (FILE UPLOAD)
-      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
-      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
-      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
-      # SUPABASE (AUTH)
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-    volumes:
-      - ./bpmn:/app/bpmn:ro           # Camunda workflows (optional)
-    depends_on:
-      - mongo
-    networks:
-      - tasker-net
-
-  # MONGODB
-  mongo:
-    image: mongo:7
-    container_name: tasker-mongo
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.authc.api_key.enabled=true
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     ports:
-      - "27017:27017"
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
     volumes:
-      - mongo_data:/data/db
-    networks:
-      - tasker-net
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
+  zeebe:
+    image: camunda/zeebe:8.6.3  # Using a specific version for stability
+    container_name: zeebe
+    ports:
+      - "26500:26500"
+    environment:
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_CLASSNAME=io.camunda.zeebe.exporter.ElasticsearchExporter
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_URL=http://elasticsearch:9200
+      - ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_BULK_SIZE=1
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    command: [ "sh", "-c", "sleep 30 && /usr/local/zeebe/bin/broker" ]  # Wait for ES to be fully ready
+
+  operate:
+    image: camunda/operate:8.6.3
+    container_name: operate
+    ports:
+      - "8081:8080"
+    environment:
+      - CAMUNDA_OPERATE_ELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_OPERATE_ZEEBEELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_OPERATE_ZEEBE_GATEWAYADDRESS=zeebe:26500
+      - CAMUNDA_OPERATE_IMPORTS_OPEN=true
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      zeebe:
+        condition: service_started
+
+  tasklist:
+    image: camunda/tasklist:8.6.3
+    container_name: tasklist
+    ports:
+      - "8082:8080"
+    environment:
+      - CAMUNDA_TASKLIST_ELASTICSEARCH_URL=http://elasticsearch:9200
+      - CAMUNDA_TASKLIST_ZEEBE_GATEWAYADDRESS=zeebe:26500
+      - CAMUNDA_TASKLIST_IMPORTS_OPEN=true
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      zeebe:
+        condition: service_started
+      operate:
+        condition: service_started
 
 volumes:
-  mongo_data:
-
-networks:
-  tasker-net:
-    driver: bridge
+  elasticsearch_data:

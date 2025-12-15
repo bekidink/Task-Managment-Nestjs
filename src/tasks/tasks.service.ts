@@ -1,3 +1,4 @@
+// src/tasks/tasks.service.ts → FINAL ETHIOPIA ENTERPRISE 2025
 import {
   Injectable,
   NotFoundException,
@@ -6,15 +7,17 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { FilesService } from '../files/files.service';
 
 @Injectable()
 export class TasksService {
   constructor(
     private prisma: PrismaService,
     private noti: NotificationsService,
+    private cloudinary: FilesService,
   ) {}
 
-  // CREATE Task
+  // CREATE TASK — FULL FEATURES
   async create(
     userId: string,
     data: {
@@ -26,47 +29,82 @@ export class TasksService {
       endDate?: string;
       projectId: string;
       assigneeId?: string;
+      files?: Express.Multer.File[];
     },
   ) {
+    const { files = [], assigneeId, projectId, title, ...rest } = data;
+
+    // 1. Validate project & access
     const project = await this.prisma.project.findUnique({
-      where: { id: data.projectId },
-      include: { team: true },
+      where: { id: projectId },
+      include: { team: true, owner: true },
     });
 
     if (!project) throw new NotFoundException('Project not found');
 
-    const isMember = await this.prisma.teamMember.count({
-      where: { teamId: project.teamId!, userId },
-    });
+    const isOwner = project.ownerId === userId;
+    const isTeamMember = project.teamId
+      ? await this.prisma.teamMember.count({
+          where: { teamId: project.teamId, userId },
+        })
+      : 0;
 
-    if (!isMember) throw new ForbiddenException('You are not in this team');
+    if (!isOwner && isTeamMember === 0) {
+      throw new ForbiddenException('You do not have access to this project');
+    }
 
+    // 2. Upload files to Cloudinary
+    const uploadedFiles = await Promise.all(
+      files.map((file) => this.cloudinary.uploadFile(file, 'task', userId)),
+    );
+
+    // 3. Create task
     const task = await this.prisma.task.create({
       data: {
-        title: data.title,
-        description: data.description,
-        status: data.status || 'TODO',
-        priority: data.priority || 'MEDIUM',
-        startDate: data.startDate ? new Date(data.startDate) : null,
-        endDate: data.endDate ? new Date(data.endDate) : null,
-        projectId: data.projectId,
-        assigneeId: data.assigneeId || null,
+        title,
+        status: rest.status || 'TODO',
+        priority: rest.priority || 'MEDIUM',
+        startDate: rest.startDate ? new Date(rest.startDate) : null,
+        endDate: rest.endDate ? new Date(rest.endDate) : null,
+        description: rest.description,
+        projectId,
+        assigneeId: assigneeId || null,
         createdBy: userId,
+        files:
+          uploadedFiles.length > 0
+            ? {
+                create: uploadedFiles.map((f) => ({
+                  url: f.url,
+                  name: f.name,
+                  size: f.size,
+                  mimeType: f.mimeType,
+                  uploadedBy: userId,
+                })),
+              }
+            : undefined,
       },
       include: {
         assignee: { select: { id: true, name: true, avatar: true } },
-        project: { include: { team: true } },
-        comments: { include: { author: true } },
+        creator: { select: { id: true, name: true, avatar: true } },
+        project: {
+          select: { id: true, name: true, team: { select: { name: true } } },
+        },
         files: true,
+        comments: {
+          include: { author: true },
+          orderBy: { createdAt: 'desc' },
+          take: 3,
+        },
+        _count: { select: { comments: true } },
       },
     });
 
-    // Send push notification if assigned
-    if (data.assigneeId && data.assigneeId !== userId) {
+    // 4. Send notification if assigned
+    if (assigneeId && assigneeId !== userId) {
       await this.noti.send(
-        data.assigneeId,
+        assigneeId,
         'New Task Assigned',
-        `${task.title} – assigned by `,
+        `You have been assigned: "${title}"`,
         { taskId: task.id, type: 'TASK_ASSIGNED' },
         'TASK_ASSIGNED',
       );
@@ -74,8 +112,6 @@ export class TasksService {
 
     return task;
   }
-
-  // GET tasks by project
   async findByProject(projectId: string, userId: string) {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
@@ -100,63 +136,103 @@ export class TasksService {
       orderBy: { createdAt: 'desc' },
     });
   }
+  // GET ALL MY TASKS (Assigned + Created)
+  async getMyTasks(
+    userId: string,
+    filters?: {
+      status?: string;
+      projectId?: string;
+      search?: string;
+    },
+  ) {
+    const where: any = {
+      OR: [{ assigneeId: userId }, { createdBy: userId }],
+    };
 
-  // GET single task
+    if (filters?.status) where.status = filters.status;
+    if (filters?.projectId) where.projectId = filters.projectId;
+    if (filters?.search) {
+      where.OR.push(
+        { title: { contains: filters.search, mode: 'insensitive' } },
+        { description: { contains: filters.search, mode: 'insensitive' } },
+      );
+    }
+
+    return this.prisma.task.findMany({
+      where,
+      include: {
+        assignee: { select: { id: true, name: true, avatar: true } },
+        creator: { select: { name: true, avatar: true } },
+        project: { select: { name: true } },
+        files: { take: 1 },
+        _count: { select: { comments: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+    });
+  }
+
+  // GET TASK BY ID — FULL DETAILS
   async findOne(id: string, userId: string) {
     const task = await this.prisma.task.findUnique({
       where: { id },
       include: {
         assignee: true,
+        creator: true,
         project: { include: { team: true } },
+        files: true,
         comments: {
           include: {
             author: { select: { id: true, name: true, avatar: true } },
           },
           orderBy: { createdAt: 'asc' },
         },
-        files: true,
       },
     });
 
-    if (!task) throw new NotFoundException('Task not found');
+    if (!task) throw new NotFoundException();
 
-    const isMember = await this.prisma.teamMember.count({
-      where: { teamId: task.project.teamId!, userId },
-    });
+    const allowed =
+      task.assigneeId === userId ||
+      task.createdBy === userId ||
+      (task.project.teamId &&
+        (await this.prisma.teamMember.count({
+          where: { teamId: task.project.teamId, userId },
+        })));
 
-    if (!isMember) throw new ForbiddenException('Access denied');
+    if (!allowed) throw new ForbiddenException();
 
     return task;
   }
 
-  // UPDATE task (status, assignee, etc.)
+  // UPDATE TASK
   async update(id: string, userId: string, data: any) {
-    const task = await this.prisma.task.findUnique({
-      where: { id },
-      include: { project: { include: { team: true } } },
-    });
-
-    if (!task) throw new NotFoundException('Task not found');
-
-    const isMember = await this.prisma.teamMember.count({
-      where: { teamId: task.project.teamId!, userId },
-    });
-
-    if (!isMember) throw new ForbiddenException('Access denied');
+    const task = await this.findOne(id, userId); // Reuses permission check
 
     const updated = await this.prisma.task.update({
       where: { id },
       data,
-      include: { assignee: true, comments: true, files: true },
+      include: {
+        assignee: true,
+        files: true,
+        comments: true,
+      },
     });
 
-    // Notify if status changed to DONE
-    if (data.status === 'DONE' && task.status !== 'DONE') {
+    // Notify on status change
+    if (data.status && data.status !== task.status) {
+      const message =
+        data.status === 'DONE'
+          ? `Task completed: "${task.title}"`
+          : `Task status changed to ${data.status}`;
+
       await this.noti.send(
-        task.assigneeId || userId,
-        'Task Completed!',
-        `${task.title} – assigned by ${task.project?.team?.name}`,
-        `${updated.title} is now DONE`,
+        task.createdBy,
+        'Task Update',
+        message,
+        {
+          taskId: task.id,
+        },
         'DONE',
       );
     }
@@ -164,81 +240,90 @@ export class TasksService {
     return updated;
   }
 
-  // DELETE task
+  // DELETE TASK
   async remove(id: string, userId: string) {
-    const task = await this.prisma.task.findUnique({
-      where: { id },
-      include: { project: { include: { team: true } } },
-    });
+    const task = await this.findOne(id, userId);
 
-    if (!task) throw new NotFoundException('Task not found');
+    const isAdmin = task.project.teamId
+      ? await this.prisma.teamMember.findFirst({
+          where: {
+            teamId: task.project.teamId,
+            userId,
+            role: { in: ['admin', 'manager'] },
+          },
+        })
+      : null;
 
-    const isAdmin = await this.prisma.teamMember.findFirst({
-      where: {
-        teamId: task.project.teamId!,
-        userId,
-        role: { in: ['admin', 'manager'] },
-      },
-    });
+    if (task.createdBy !== userId && !isAdmin) {
+      throw new ForbiddenException('Only creator or admin can delete');
+    }
 
-    if (!isAdmin)
-      throw new ForbiddenException('Only admin/manager can delete tasks');
-
-    return this.prisma.task.delete({ where: { id } });
+    await this.prisma.task.delete({ where: { id } });
+    return { success: true };
   }
 
-  // ADD COMMENT
+  // ADD COMMENT + MENTIONS
   async addComment(
     taskId: string,
     userId: string,
     content: string,
     mentions: string[] = [],
   ) {
-    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
-    if (!task) throw new NotFoundException('Task not found');
+    const task = await this.findOne(taskId, userId);
 
     const comment = await this.prisma.taskComment.create({
-      data: { taskId, authorId: userId, content, mentions },
-      include: { author: { select: { name: true, avatar: true } } },
+      data: {
+        content,
+        taskId,
+        authorId: userId,
+        mentions,
+      },
+      include: {
+        author: { select: { id: true, name: true, avatar: true } },
+      },
     });
 
     // Notify mentioned users
-    for (const userId of mentions) {
-      await this.noti.send(
-        userId,
-        'Mentioned in Task',
-        `${task.title} – assigned `,
-        `You were mentioned in "${task.title}"`,
-        'MENTION',
-      );
+    for (const mentionedId of mentions) {
+      if (mentionedId !== userId) {
+        await this.noti.send(
+          mentionedId,
+          'Mentioned in Task',
+          `You were mentioned in "${task.title}"`,
+          { taskId, type: 'MENTION' },
+          'MENTION',
+        );
+      }
     }
 
     return comment;
   }
-  // In TasksService
+
+  // MY ASSIGNED TASKS
   async findAssignedToMe(userId: string) {
     return this.prisma.task.findMany({
       where: { assigneeId: userId },
       include: {
-        assignee: { select: { id: true, name: true, avatar: true } },
-        project: { select: { id: true, name: true } },
-        comments: { include: { author: true }, orderBy: { createdAt: 'desc' } },
-        files: true,
+        project: { select: { name: true } },
+        creator: { select: { name: true } },
+        files: { take: 1 },
+        _count: { select: { comments: true } },
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
+  // MY CREATED TASKS
   async findCreatedByMe(userId: string) {
     return this.prisma.task.findMany({
       where: { createdBy: userId },
       include: {
-        assignee: { select: { id: true, name: true, avatar: true } },
-        project: { select: { id: true, name: true } },
-        comments: { include: { author: true }, orderBy: { createdAt: 'desc' } },
-        files: true,
+        assignee: true,
+        project: { select: { name: true } },
+        files: { take: 1 },
+        _count: { select: { comments: true } },
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
   }
 }
