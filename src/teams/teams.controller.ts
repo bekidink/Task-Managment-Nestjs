@@ -9,6 +9,7 @@ import {
   Body,
   UploadedFile,
   BadRequestException,
+  Patch,
 } from '@nestjs/common';
 import { TeamsService } from './teams.service';
 import { FilesService } from '../files/files.service';
@@ -102,4 +103,10 @@ export class TeamsController {
   getOne(@Param('id') id: string) {
     return this.teamsService.findOne(id);
   }
+  @Patch(':id')
+    @ApiOperation({ summary: 'Update team' })
+    update(@Param('id') id: string, @Req() req: any, @Body() body: any) {
+      return this.teamsService.update(id,  body);
+    }
+  
 }
