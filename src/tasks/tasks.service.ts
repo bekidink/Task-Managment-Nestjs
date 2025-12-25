@@ -206,16 +206,59 @@ export class TasksService {
   }
 
   // UPDATE TASK
-  async update(id: string, userId: string, data: any) {
+  async update(
+    id: string,
+    userId: string,
+    data: any,
+    newFiles?: Express.Multer.File[],
+  ) {
     const task = await this.findOne(id, userId); // Reuses permission check
 
+    // Upload new files if provided
+    let uploadedFiles: any[] = [];
+    if (newFiles && newFiles.length > 0) {
+      uploadedFiles = await Promise.all(
+        newFiles.map((file) =>
+          this.cloudinary.uploadFile(file, 'task', userId),
+        ),
+      );
+    }
+
+    // Prepare update data
+    const updateData: any = { ...data };
+
+    // Handle date fields
+    if (data.startDate) updateData.startDate = new Date(data.startDate);
+    if (data.endDate) updateData.endDate = new Date(data.endDate);
+
+    // Update task with file attachments if new files exist
     const updated = await this.prisma.task.update({
       where: { id },
-      data,
+      data: {
+        ...updateData,
+        ...(uploadedFiles.length > 0 && {
+          files: {
+            create: uploadedFiles.map((f) => ({
+              url: f.url,
+              name: f.name,
+              size: f.size,
+              mimeType: f.mimeType,
+              uploadedBy: userId,
+            })),
+          },
+        }),
+      },
       include: {
         assignee: true,
+        creator: true,
         files: true,
-        comments: true,
+        comments: {
+          include: {
+            author: { select: { id: true, name: true, avatar: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        project: true,
       },
     });
 
@@ -226,18 +269,147 @@ export class TasksService {
           ? `Task completed: "${task.title}"`
           : `Task status changed to ${data.status}`;
 
-      await this.noti.send(
-        task.createdBy,
-        'Task Update',
-        message,
-        {
-          taskId: task.id,
-        },
-        'DONE',
-      );
+      // Notify creator if they're not the one updating
+      if (task.createdBy !== userId) {
+        await this.noti.send(
+          task.createdBy,
+          'Task Update',
+          message,
+          { taskId: task.id, type: 'TASK_UPDATED' },
+          'MENTION',
+        );
+      }
+
+      // Notify assignee if status changed and they're not the one updating
+      if (task.assigneeId && task.assigneeId !== userId) {
+        await this.noti.send(
+          task.assigneeId,
+          'Task Update',
+          message,
+          { taskId: task.id, type: 'TASK_UPDATED' },
+          'COMMENT',
+        );
+      }
+    }
+
+    // Notify on assignee change
+    if (data.assigneeId && data.assigneeId !== task.assigneeId) {
+      const newAssigneeMessage = `You have been assigned to task: "${task.title}"`;
+      const previousAssigneeMessage = `You have been unassigned from task: "${task.title}"`;
+
+      // Notify new assignee
+      if (data.assigneeId !== userId) {
+        await this.noti.send(
+          data.assigneeId,
+          'New Task Assignment',
+          newAssigneeMessage,
+          { taskId: task.id, type: 'TASK_ASSIGNED' },
+          'TASK_ASSIGNED',
+        );
+      }
+
+      // Notify previous assignee if they exist and it's not the same user
+      if (
+        task.assigneeId &&
+        task.assigneeId !== userId &&
+        task.assigneeId !== data.assigneeId
+      ) {
+        await this.noti.send(
+          task.assigneeId,
+          'Task Assignment Removed',
+          previousAssigneeMessage,
+          { taskId: task.id, type: 'TASK_UNASSIGNED' },
+          'TASK_ASSIGNED',
+        );
+      }
+    }
+
+    // Notify on priority change
+    if (data.priority && data.priority !== task.priority) {
+      const priorityMessage = `Task priority changed to ${data.priority}: "${task.title}"`;
+
+      // Notify assignee if they exist
+      if (task.assigneeId && task.assigneeId !== userId) {
+        await this.noti.send(
+          task.assigneeId,
+          'Task Priority Changed',
+          priorityMessage,
+          { taskId: task.id, type: 'TASK_PRIORITY_CHANGED' },
+          'TASK_ASSIGNED',
+        );
+      }
+
+      // Notify creator if they're not the one updating
+      if (task.createdBy !== userId) {
+        await this.noti.send(
+          task.createdBy,
+          'Task Priority Changed',
+          priorityMessage,
+          { taskId: task.id, type: 'TASK_PRIORITY_CHANGED' },
+          'DONE',
+        );
+      }
     }
 
     return updated;
+  }
+
+  // DELETE TASK FILE
+  async deleteFile(taskId: string, fileId: string, userId: string) {
+    const task = await this.findOne(taskId, userId);
+
+    // Check if file exists and belongs to task
+    const file = await this.prisma.file.findFirst({
+      where: {
+        id: fileId,
+        taskId: taskId,
+      },
+    });
+
+    if (!file) {
+      throw new NotFoundException(
+        'File not found or does not belong to this task',
+      );
+    }
+
+    // Check permissions (creator, assignee, or team admin)
+    const isCreator = task.createdBy === userId;
+    const isAssignee = task.assigneeId === userId;
+    const isTeamAdmin = task.project.teamId
+      ? await this.prisma.teamMember.findFirst({
+          where: {
+            teamId: task.project.teamId,
+            userId,
+            role: { in: ['admin', 'manager'] },
+          },
+        })
+      : null;
+
+    if (!isCreator && !isAssignee && !isTeamAdmin) {
+      throw new ForbiddenException(
+        'You do not have permission to delete this file',
+      );
+    }
+
+    // Delete from Cloudinary
+    await this.cloudinary.deleteFile(file.url);
+
+    // Delete from database
+    await this.prisma.file.delete({
+      where: { id: fileId },
+    });
+
+    return { success: true, message: 'File deleted successfully' };
+  }
+
+  // GET TASK FILES
+  async getTaskFiles(taskId: string, userId: string) {
+    const task = await this.findOne(taskId, userId); // This validates access
+
+    return this.prisma.file.findMany({
+      where: { taskId },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   // DELETE TASK
@@ -325,5 +497,35 @@ export class TasksService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+  
+  async bulkUpdate(
+    userId: string,
+    taskIds: string[],
+    updates: Partial<{
+      status: 'TODO' | 'IN_PROGRESS' | 'DONE';
+      priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+      assigneeId: string | null;
+    }>,
+  ) {
+    // Verify user has access to all tasks
+    for (const taskId of taskIds) {
+      await this.findOne(taskId, userId);
+    }
+
+    const updatedTasks = await Promise.all(
+      taskIds.map((id) =>
+        this.prisma.task.update({
+          where: { id },
+          data: updates,
+          include: {
+            assignee: { select: { id: true, name: true, avatar: true } },
+            creator: { select: { name: true, avatar: true } },
+          },
+        }),
+      ),
+    );
+
+    return updatedTasks;
   }
 }
